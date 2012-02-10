@@ -18,6 +18,7 @@
  * attached to both GPUs.
  */
 
+#include <stdio.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 // Simple reduction kernel.
@@ -35,7 +36,7 @@ __global__ static void reduceKernel(float *d_Result, float *d_Input, int N){
 }
 
 extern "C" 
-void launch_reduceKernel(float *d_Result, float *d_Input, int N, int BLOCK_N, int THREAD_N, cudaStream_t &s) 
+void launch_reduceKernel(float *d_Result, float *d_Input, int N, int BLOCK_N, int THREAD_N, cudaStream_t s) 
 {
 	reduceKernel<<<BLOCK_N, THREAD_N, 0, s>>>(d_Result, d_Input, N);
 }

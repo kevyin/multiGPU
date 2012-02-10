@@ -41,6 +41,6 @@ typedef struct {
 } TGPUplan;
 
 extern "C" 
-void launch_reduceKernel(float *d_Result, float *d_Input, int N, int BLOCK_N, int THREAD_N, cudaStream_t &s);
+void launch_reduceKernel(float *d_Result, float *d_Input, int N, int BLOCK_N, int THREAD_N, cudaStream_t s);
 
 #endif
