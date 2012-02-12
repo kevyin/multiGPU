@@ -14,6 +14,7 @@ module Main where
 import Time
 
 -- System
+import Control.Concurrent               (forkOS)
 import System.Random.MWC
 import Data.List
 import Control.Monad
@@ -69,14 +70,17 @@ main = do
 executePlans :: [Plan] -> IO ()
 executePlans plans = do
     --Copy data to GPU, launch Kernel, copy data back all asynchronously
-    (t,_) <- flip (benchmark 100) CR.sync $ forM_ plans $ \plan -> do 
-      CR.set (device plan)
-      --Copy input data from CPU
-      CR.pokeArrayAsync (dataN plan) (h_data plan) (d_data plan) (Just $ stream plan)
-      --Perform GPU computations
-      reduceKernel (d_sum plan) (d_data plan) (dataN plan) block_n thread_n (stream plan)
-      --Read back GPU results
-      CR.peekArrayAsync accum_n (d_sum plan) (h_sum_from_device plan) (Just $ stream plan)
+    (t,_) <- flip bracketTime CR.sync $ forM_ plans $ forkOS . \plan -> do 
+      replicateM_ 100 $ do
+        CR.set (device plan)
+        --Copy input data from CPU
+        CR.pokeArrayAsync (dataN plan) (h_data plan) (d_data plan) (Just $ stream plan)
+        --Perform GPU computations
+        reduceKernel (d_sum plan) (d_data plan) (dataN plan) block_n thread_n (stream plan)
+        --Read back GPU results
+        CR.peekArrayAsync accum_n (d_sum plan) (h_sum_from_device plan) (Just $ stream plan)
+
+    putStrLn $ " GPU processing time: " ++ (show $ timeIn millisecond t) ++ " ms"
     
     --Process results
     h_sumGPU <- forM plans $ \plan -> do
@@ -86,7 +90,6 @@ executePlans plans = do
       return $ sum hs_sum
     let sumGPU = sum h_sumGPU
 
-    putStrLn $ " GPU processing time: " ++ (show $ timeIn millisecond t) ++ " ms"
 
 
     let sumCPU = sum $ map (\p -> U.sum $ v_data p) plans

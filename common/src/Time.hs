@@ -34,6 +34,16 @@ timeIn u (Time t) = u t
 elapsedTime :: Time -> Time -> Time
 elapsedTime (Time t1) (Time t2) = Time (t2 - t1)
 
+-- Simple timing/benchmarking
+--
+bracketTime :: IO a -> IO b -> IO (Time, a)
+bracketTime f finaliser = do
+  t1 <- getTime
+  r  <- f
+  _  <- finaliser
+  t2 <- r `seq` getTime
+  return (elapsedTime t1 t2, r)
+
 
 -- Simple benchmarking
 --

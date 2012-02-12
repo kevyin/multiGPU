@@ -11,6 +11,7 @@ HSMAIN          := multiGPU.hs
 CUFILES         := simpleMultiGPU_kernel.cu
 
 EXTRALIBS       := stdc++
+GHCFLAGS	+= -threaded
 
 # ------------------------------------------------------------------------------
 # Haskell/CUDA build system

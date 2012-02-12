@@ -1,0 +1,9 @@
+An implemenations of Nvidia's simpleMultiGPU example
+
+Uses individual threads to issue commands to a gpu
+
+Try with different threads 
+
+eg.
+multiGPU +RTS -N2
+
