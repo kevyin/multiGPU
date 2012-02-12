@@ -6,6 +6,10 @@
 -- License   : BSD
 --
 -- An implemenations of Nvidia's simpleMultiGPU example
+-- Non Async version
+-- Comment/uncomment the forkOS line below to see speed difference
+-- Second test will expectedly fail as it doesn't make sense to have 4 threads issueing
+-- instructions to one GPU
 --
 --------------------------------------------------------------------------------
 
@@ -19,7 +23,7 @@ import System.Random.MWC
 import Data.List
 import Control.Monad
 import Foreign
-import Foreign.CUDA                     (HostPtr, DevicePtr, withDevicePtr, withHostPtr) 
+import Foreign.CUDA                     (DevicePtr, withDevicePtr) 
 import Foreign.CUDA.Runtime.Stream      as CR
 import qualified Foreign.CUDA.Runtime   as CR
 
@@ -39,13 +43,13 @@ data Plan = Plan
     device            :: Int,              -- ^ device number
     stream            :: Stream,           -- ^ stream on the device
     dataN             :: Int,              -- ^ number of elements in data
-    v_data            :: U.Vector Float,   -- ^ host data
-    h_data            :: HostPtr Float,    -- ^ host data in pagelocked memory
+    v_data            :: U.Vector Float,   -- ^ host data as vector
+    h_data            :: Ptr Float,        -- ^ host data in memory
 
     d_data            :: DevicePtr Float,  -- ^ device data
     d_sum             :: DevicePtr Float,  -- ^ device results
 
-    h_sum_from_device :: HostPtr Float     -- ^ results from device
+    h_sum_from_device :: Ptr Float         -- ^ results from device
   }
   deriving Show
 
@@ -59,6 +63,7 @@ main = do
   putStrLn $ show $ "Executing " ++ (show gpu_n) ++ " sets of data over " ++ (show gpu_n) ++ " GPU(s)"
   withPlans gpu_n gpu_n executePlans
 
+  CR.sync
   -- Use only first GPU
   putStrLn $ show $ "Executing " ++ (show gpu_n) ++ " sets of data over 1 GPU"
   withPlans gpu_n 1 executePlans
@@ -70,15 +75,16 @@ main = do
 executePlans :: [Plan] -> IO ()
 executePlans plans = do
     --Copy data to GPU, launch Kernel, copy data back all asynchronously
-    (t,_) <- flip bracketTime CR.sync $ forM_ plans $ forkOS . \plan -> do 
+    --(t,_) <- flip bracketTime CR.sync $ forM_ plans $ forkOS . \plan -> do 
+    (t,_) <- flip bracketTime CR.sync $ forM_ plans $ \plan -> do 
       replicateM_ 100 $ do
         CR.set (device plan)
         --Copy input data from CPU
-        CR.pokeArrayAsync (dataN plan) (h_data plan) (d_data plan) (Just $ stream plan)
+        CR.pokeArray (dataN plan) (h_data plan) (d_data plan) 
         --Perform GPU computations
         reduceKernel (d_sum plan) (d_data plan) (dataN plan) block_n thread_n (stream plan)
         --Read back GPU results
-        CR.peekArrayAsync accum_n (d_sum plan) (h_sum_from_device plan) (Just $ stream plan)
+        CR.peekArray accum_n (d_sum plan) (h_sum_from_device plan) 
 
     putStrLn $ " GPU processing time: " ++ (show $ timeIn millisecond t) ++ " ms"
     
@@ -86,7 +92,7 @@ executePlans plans = do
     h_sumGPU <- forM plans $ \plan -> do
       CR.set (device plan)
       CR.block (stream plan)
-      hs_sum <- withHostPtr (h_sum_from_device plan) $ \ptr -> peekArray accum_n ptr
+      hs_sum <- peekArray accum_n (h_sum_from_device plan)
       return $ sum hs_sum
     let sumGPU = sum h_sumGPU
 
@@ -120,10 +126,10 @@ withPlans n ndevices action = do
     -- Allocate memory
     -- Host
     v_data <- randomList dataN 
-    h_data <- CR.mallocHostArray [] dataN 
-    withHostPtr h_data $ \ptr -> pokeArray ptr (U.toList v_data)
+    h_data <- mallocArray dataN 
+    pokeArray h_data (U.toList v_data)
 
-    h_sum_from_device <- CR.mallocHostArray [] accum_n 
+    h_sum_from_device <- mallocArray accum_n 
 
     -- Device
     d_data <- CR.mallocArray (dataN   * sizeOf (undefined :: DevicePtr Float))
@@ -137,12 +143,9 @@ withPlans n ndevices action = do
   -- clean up
   forM_ plans $ \plan -> do
     CR.set (device plan)
-    CR.freeHost (h_data plan)
-    CR.freeHost (h_sum_from_device plan)
 
     CR.free (d_data plan)
     CR.free (d_sum plan)
-    --CR.destroy (stream plan)
   forM_ devStrms' $ \(_,stream) -> CR.destroy stream
 
 
