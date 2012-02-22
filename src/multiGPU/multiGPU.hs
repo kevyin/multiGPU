@@ -11,10 +11,12 @@
 
 module Main where
 
-import Time
+--import Time
 
 -- System
-import Control.Concurrent               (forkOS)
+import Control.Concurrent               (forkOS, threadDelay)
+import Control.Concurrent.MVar
+import Criterion.Measurement
 import System.Random.MWC
 import Data.List
 import Control.Monad
@@ -45,9 +47,9 @@ data Plan = Plan
     d_data            :: DevicePtr Float,  -- ^ device data
     d_sum             :: DevicePtr Float,  -- ^ device results
 
-    h_sum_from_device :: HostPtr Float     -- ^ results from device
+    h_sum_from_device :: HostPtr Float,     -- ^ results from device
+    threadToken       :: MVar String
   }
-  deriving Show
 
 
 main :: IO ()
@@ -70,17 +72,25 @@ main = do
 executePlans :: [Plan] -> IO ()
 executePlans plans = do
     --Copy data to GPU, launch Kernel, copy data back all asynchronously
-    (t,_) <- flip bracketTime CR.sync $ forM_ plans $ forkOS . \plan -> do 
-      replicateM_ 100 $ do
+    t1 <- getTime
+    forM_ plans $ \plan -> do 
+      putStrLn $ "dataN " ++ (show $ dataN plan)
+      forkOS $ do
         CR.set (device plan)
         --Copy input data from CPU
         CR.pokeArrayAsync (dataN plan) (h_data plan) (d_data plan) (Just $ stream plan)
         --Perform GPU computations
-        reduceKernel (d_sum plan) (d_data plan) (dataN plan) block_n thread_n (stream plan)
+        replicateM_ 5000 $ do
+          reduceKernel (d_sum plan) (d_data plan) (dataN plan) block_n thread_n (stream plan)
         --Read back GPU results
         CR.peekArrayAsync accum_n (d_sum plan) (h_sum_from_device plan) (Just $ stream plan)
-
-    putStrLn $ " GPU processing time: " ++ (show $ timeIn millisecond t) ++ " ms"
+        putMVar (threadToken plan) ("done " ++ show (device plan))
+    CR.sync
+    tokens <- mapM (takeMVar . threadToken) plans
+    --putStrLn $ show tokens
+    t2 <- getTime
+    putStrLn $ " GPU processing time: " ++ (show $ secs $ t2 - t1) 
+    --putStrLn $ " GPU processing time: " ++ (show $ timeIn millisecond $ elapsedTime t1 t2) 
     
     --Process results
     h_sumGPU <- forM plans $ \plan -> do
@@ -89,8 +99,6 @@ executePlans plans = do
       hs_sum <- withHostPtr (h_sum_from_device plan) $ \ptr -> peekArray accum_n ptr
       return $ sum hs_sum
     let sumGPU = sum h_sumGPU
-
-
 
     let sumCPU = sum $ map (\p -> U.sum $ v_data p) plans
 
@@ -129,8 +137,9 @@ withPlans n ndevices action = do
     d_data <- CR.mallocArray (dataN   * sizeOf (undefined :: DevicePtr Float))
     d_sum  <- CR.mallocArray (accum_n * sizeOf (undefined :: DevicePtr Float))
 
+    th <- newEmptyMVar
 
-    return $ Plan i stream dataN v_data h_data d_data d_sum h_sum_from_device
+    return $ Plan i stream dataN v_data h_data d_data d_sum h_sum_from_device th
 
   action plans
 
